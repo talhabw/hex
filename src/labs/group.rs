@@ -93,7 +93,8 @@ impl Feature {
             | Self::RestoreShortcutDefault
             | Self::StandaloneSpecialKeys
             | Self::SectionKeyAlone
-            | Self::ShareShortcut => Group::Shortcuts,
+            | Self::ShareShortcut
+            | Self::CapsLockDictation => Group::Shortcuts,
             Self::KeyboardModelSwitching
             | Self::UnloadIdle
             | Self::PickerSortFilter
