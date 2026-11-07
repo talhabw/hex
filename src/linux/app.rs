@@ -699,6 +699,7 @@ impl LinuxDesktopHost {
         }
         let model = crate::transcription::models::definition(self.settings.transcription.model);
         if !crate::transcription::models::is_installed(model, &self.settings.transcription.language)
+            && crate::transcription::remote::active().is_none()
         {
             self.status = "Model required".into();
             return;

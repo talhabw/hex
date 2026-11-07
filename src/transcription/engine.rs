@@ -524,17 +524,44 @@ impl PendingTranscript {
 }
 
 impl TranscriptionEngine {
+    /// Fork patch: an engine whose model is not loaded yet. Remote dictation
+    /// never needs it; a local run loads `selection` on first use.
+    #[cfg(not(target_os = "macos"))]
+    pub fn start_parked(
+        selection: crate::transcription::models::TranscriptionSelection,
+    ) -> Result<Self> {
+        let engine = Self::start_with(None, Some(selection))?;
+        engine.streams.store(false, Ordering::Release);
+        Ok(engine)
+    }
+
     pub fn start(model: Model) -> Result<Self> {
-        let streams = Arc::new(AtomicBool::new(model.stream_options().is_some()));
+        Self::start_with(Some(model), None)
+    }
+
+    fn start_with(
+        model: Option<Model>,
+        parked: Option<crate::transcription::models::TranscriptionSelection>,
+    ) -> Result<Self> {
+        let streams = Arc::new(AtomicBool::new(
+            model
+                .as_ref()
+                .is_some_and(|model| model.stream_options().is_some()),
+        ));
         let (commands, receiver) = mpsc::channel();
         let requests = Arc::new(AtomicU64::new(0));
         let running = Running::default();
         let stalled = Arc::new(AtomicBool::new(false));
-        let held = Held::new(Mutex::new(model.gguf_selection().cloned()));
+        let held = Held::new(Mutex::new(
+            model
+                .as_ref()
+                .and_then(|model| model.gguf_selection().cloned())
+                .or_else(|| parked.clone()),
+        ));
         let dictating = Arc::new(AtomicBool::new(false));
         let worker = Worker {
-            model: Some(model),
-            parked: None,
+            model,
+            parked,
             idle_since: Instant::now(),
             running: running.clone(),
             stalled: stalled.clone(),
@@ -1354,6 +1381,21 @@ impl Worker {
         job: Job,
     ) {
         self.running.enter(&job.cancel);
+        // Fork patch: with no local model, remote dictation still transcribes.
+        #[cfg(not(target_os = "macos"))]
+        if self.model.is_none()
+            && let Some(remote) = crate::transcription::remote::active()
+        {
+            let clip = whole_clip(clip, crate::labs::skip_pauses());
+            let result =
+                crate::transcription::remote::transcribe(&remote, &clip).map(|text| Transcribed {
+                    text: text.trim().to_string(),
+                    source,
+                    finish_ms: started.elapsed().as_millis() as u64,
+                });
+            job.finish(result);
+            return;
+        }
         let Some(model) = self.model() else {
             job.finish(Err("the speech model could not be reloaded".into()));
             return;
