@@ -4,7 +4,7 @@ use super::*;
 /// The clip is authoritative: a stream fed well past its trimmed end, or one
 /// that produced nothing, is reported unusable so the caller falls back.
 /// The live stream as the worker drives it.
-pub(super) trait StreamFeed {
+pub(crate) trait StreamFeed {
     fn feed(&mut self, samples: &[f32]) -> Result<(), String>;
     fn finalize(&mut self) -> Result<String, String>;
     fn partial(&self) -> Partial;

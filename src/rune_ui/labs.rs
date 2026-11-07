@@ -322,6 +322,15 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Use Menu, Pause, or Scroll Lock as a shortcut without a modifier, such as Caps Lock remapped to Menu"),
         ));
     }
+    // Fork patch: dictation through Deepgram.
+    if caps.os != super::platform::Os::Macos {
+        rows.push(row(
+            Feature::RemoteTranscription,
+            &TIMER,
+            tr("Deepgram transcription"),
+            tr("Dictate through Deepgram Nova-3 instead of the local model, with live text. Key and options: ~/.config/hex/remote-transcription.json"),
+        ));
+    }
     // Linux's and Windows' engines transcribe a whole clip on the CPU.
     if caps.os != super::platform::Os::Macos {
         rows.push(row(
@@ -455,6 +464,7 @@ fn row_key(feature: Feature) -> &'static str {
         Feature::SkipPauses => "lab-skip-pauses",
         Feature::StopWhenCallEnds => "lab-stop-when-call-ends",
         Feature::OutputFixes => "lab-output-fixes",
+        Feature::RemoteTranscription => "lab-remote-transcription",
     }
 }
 

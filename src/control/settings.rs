@@ -393,6 +393,11 @@ const KEYS: &[Key] = &[
         "Labs: Output's Try card offers Vocabulary and Fix this, which copies an agent prompt naming the wrong result",
     ),
     key(
+        "labs.remote_transcription",
+        Kind::Bool,
+        "Labs (fork): dictate through Deepgram instead of the local model; key and options in ~/.config/hex/remote-transcription.json",
+    ),
+    key(
         "meetings.enabled",
         Kind::Bool,
         "Labs: Meetings (beta), call detection, recording, and transcripts",

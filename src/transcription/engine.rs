@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{Result, eyre};
 use transcribe_cpp::CancelToken;
 
+pub(crate) use streaming::StreamFeed;
 /// The model the engine owns: macOS keeps its warm, switchable transcriber
 use streaming::*;
 
@@ -604,12 +605,17 @@ impl TranscriptionEngine {
 
     /// Opens a live stream when the loaded model can stream on this device.
     pub fn begin(&self) -> Option<LiveStream> {
-        // Fork patch: remote dictation sends the whole clip after release.
+        // Fork patch: remote dictation streams over Deepgram's WebSocket, or
+        // sends the whole clip after release when streaming is off.
         #[cfg(not(target_os = "macos"))]
-        if crate::transcription::remote::active().is_some() {
-            return None;
-        }
-        if !self.streams.load(Ordering::Acquire) {
+        let remote_stream = match crate::transcription::remote::active() {
+            Some(remote) if remote.streaming => true,
+            Some(_) => return None,
+            None => false,
+        };
+        #[cfg(target_os = "macos")]
+        let remote_stream = false;
+        if !remote_stream && !self.streams.load(Ordering::Acquire) {
             return None;
         }
         let id = self.next_stream.fetch_add(1, Ordering::Relaxed) + 1;
@@ -670,9 +676,9 @@ impl TranscriptionEngine {
     pub fn finish(&self, stream: Option<LiveStream>, clip: Vec<f32>) -> Result<PendingTranscript> {
         // Fork patch: dictation through a remote API (transcription/remote.rs).
         if let Some(remote) = crate::transcription::remote::active() {
-            drop(stream);
+            let stream = if remote.streaming { stream } else { None };
             return self.finish_with(
-                None,
+                stream,
                 clip,
                 Box::new(move |model, clip| {
                     let clip = whole_clip(clip, crate::labs::skip_pauses());
@@ -1154,6 +1160,13 @@ impl Worker {
         commands: &Receiver<Command>,
         next: &mut VecDeque<Command>,
     ) {
+        #[cfg(not(target_os = "macos"))]
+        if let Some(remote) =
+            crate::transcription::remote::active().filter(|remote| remote.streaming)
+        {
+            self.remote_stream(&remote, id, cancel, partials, commands, next);
+            return;
+        }
         let Some(options) = self
             .model()
             .and_then(|model| model.stream_options().cloned())
@@ -1231,6 +1244,70 @@ impl Worker {
                 next.push_back(command);
             }
             Err(error) => tracing::warn!(%error, "could not begin a live stream"),
+        }
+    }
+
+    /// Fork patch: drives one dictation stream over Deepgram's live
+    /// WebSocket instead of the local model. A stream that fails or misses
+    /// its finish falls back to the clip's offline run (the remote batch
+    /// request, then the local model).
+    #[cfg(not(target_os = "macos"))]
+    fn remote_stream(
+        &mut self,
+        remote: &crate::transcription::remote::RemoteConfig,
+        id: u64,
+        cancel: &CancelToken,
+        partials: Option<&Partials>,
+        commands: &Receiver<Command>,
+        next: &mut VecDeque<Command>,
+    ) {
+        let mut stream =
+            match crate::transcription::remote::DeepgramStream::start(remote, cancel.clone()) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    tracing::warn!(%error, "could not begin a Deepgram stream");
+                    return;
+                }
+            };
+        self.running.enter(cancel);
+        let mut stats = FeedStats::default();
+        let ended = drive_stream(
+            id,
+            &mut stream,
+            commands,
+            &self.stalled,
+            partials,
+            next,
+            &mut stats,
+        );
+        match ended {
+            StreamEnd::Finished {
+                result,
+                clip,
+                offline,
+                job,
+                started,
+            } => match result {
+                Ok(text) => job.finish(Ok(Transcribed {
+                    text,
+                    source: Source::Stream,
+                    finish_ms: started.elapsed().as_millis() as u64,
+                })),
+                Err(_) if job.cancel.is_cancelled() => {
+                    job.finish(Err("transcription was abandoned".into()));
+                }
+                Err(reason) => {
+                    tracing::warn!(%reason, "Deepgram stream unusable; sending the full clip");
+                    self.offline(clip, offline, Source::Fallback(reason), started, job);
+                }
+            },
+            StreamEnd::Cancelled | StreamEnd::Disconnected => {}
+            StreamEnd::Interrupted(command) => {
+                if let Some(partials) = partials {
+                    partials.publish(Partial::default());
+                }
+                next.push_back(command);
+            }
         }
     }
 
