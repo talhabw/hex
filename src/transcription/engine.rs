@@ -703,6 +703,8 @@ impl TranscriptionEngine {
     pub fn finish(&self, stream: Option<LiveStream>, clip: Vec<f32>) -> Result<PendingTranscript> {
         // Fork patch: dictation through a remote API (transcription/remote.rs).
         if let Some(remote) = crate::transcription::remote::active() {
+            // HEX_RETAIN_DICTATION_AUDIO keeps clips for scripts/deepgram-compare.py.
+            crate::transcription::remote::retain(&clip);
             let stream = if remote.streaming { stream } else { None };
             return self.finish_with(
                 stream,

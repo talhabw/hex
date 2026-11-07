@@ -137,6 +137,46 @@ pub(crate) fn active() -> Option<RemoteConfig> {
     Some(config)
 }
 
+/// Keeps the last `HEX_RETAIN_DICTATION_AUDIO` clips as WAVs in
+/// `<support>/diagnostic-dictation-audio` (Linux has no other writer), for
+/// `scripts/deepgram-compare.py`.
+pub(crate) fn retain(clip: &[f32]) {
+    let Some(keep) = std::env::var("HEX_RETAIN_DICTATION_AUDIO")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+    else {
+        return;
+    };
+    let Ok(dir) = crate::app_paths::support_dir().map(|d| d.join("diagnostic-dictation-audio"))
+    else {
+        return;
+    };
+    let result = (|| -> Result<(), String> {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis();
+        std::fs::write(dir.join(format!("dictation-{ms}.wav")), wav(clip)?)
+            .map_err(|e| e.to_string())?;
+        let mut clips: Vec<_> = std::fs::read_dir(&dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "wav"))
+            .collect();
+        clips.sort();
+        let excess = clips.len().saturating_sub(keep);
+        for old in &clips[..excess] {
+            let _ = std::fs::remove_file(old);
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        tracing::warn!(%error, "could not keep the dictation clip");
+    }
+}
+
 /// Transcribes a 16 kHz mono clip with the configured provider.
 pub(crate) fn transcribe(config: &RemoteConfig, clip: &[f32]) -> Result<String, String> {
     let text = match config.provider.as_str() {
