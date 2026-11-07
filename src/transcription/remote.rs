@@ -43,8 +43,11 @@ pub(crate) struct RemoteConfig {
     /// On a network or API failure, transcribe the clip with the local model.
     pub fallback_to_local: bool,
     pub timeout_seconds: u64,
-    /// Extra Deepgram query parameters, e.g. `{"numerals": "true"}`.
-    pub extra_params: std::collections::BTreeMap<String, String>,
+    /// Extra Deepgram query parameters, e.g. `{"numerals": true}`; an array
+    /// repeats the parameter (`{"language_hint": ["tr", "en"]}`).
+    pub extra_params: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Most vocabulary terms sent as keyterms (Deepgram caps them at 500 tokens).
+    pub max_keyterms: usize,
 }
 
 impl Default for RemoteConfig {
@@ -60,6 +63,7 @@ impl Default for RemoteConfig {
             fallback_to_local: true,
             timeout_seconds: 30,
             extra_params: Default::default(),
+            max_keyterms: 50,
         }
     }
 }
@@ -137,15 +141,32 @@ fn deepgram(config: &RemoteConfig, clip: &[f32]) -> Result<String, String> {
         query.append_pair("smart_format", bool_str(config.smart_format));
         query.append_pair("punctuate", "true");
         if config.use_vocabulary {
-            // Nova-3 keyterm prompting; Deepgram caps it around 100 terms.
-            for term in crate::dictation::vocabulary::terms().iter().take(100) {
+            // Nova-3 keyterm prompting: 500 tokens at most per request.
+            for term in crate::dictation::vocabulary::terms()
+                .iter()
+                .take(config.max_keyterms)
+            {
                 if !term.trim().is_empty() {
                     query.append_pair("keyterm", term.trim());
                 }
             }
         }
         for (key, value) in &config.extra_params {
-            query.append_pair(key, value);
+            let values = match value {
+                serde_json::Value::Array(items) => items.clone(),
+                other => vec![other.clone()],
+            };
+            for value in values {
+                match value {
+                    serde_json::Value::Null => {}
+                    serde_json::Value::String(text) => {
+                        query.append_pair(key, &text);
+                    }
+                    other => {
+                        query.append_pair(key, &other.to_string());
+                    }
+                }
+            }
         }
     }
     let agent = crate::net::agent(url.as_str(), |c| {
