@@ -32,12 +32,11 @@ Upstream Hex ([anomalyco/hex](https://github.com/anomalyco/hex)) plus one small 
 - Hex reads the file on every dictation, so you don't need to restart after editing it. The Labs options override `streaming`, `language`, `stream_endpointing_ms`, `dictation` and `numerals` from this file.
 - `api_key` can be left empty to use `DEEPGRAM_API_KEY` from `~/.local/share/hex/session.env`.
 - `use_vocabulary` sends Hex's vocabulary terms as Nova-3 `keyterm`s.
-- `fallback_to_local`: if the API fails, the clip is transcribed with the selected local model.
+- `fallback_to_local`: if the API fails, the clip is transcribed with the selected local model (needs one installed; off here).
 - `extra_params`: any additional Deepgram `/v1/listen` query params (e.g. `{"numerals": "true"}`).
-- While remote is on, live text/streaming is off: text arrives after you release the shortcut.
 - Hex's modes, replacements, transformations and history still apply to the Deepgram text.
 
-The patch: `src/transcription/remote.rs` + a few lines in `src/transcription/engine.rs` (`begin`, `finish`).
+The patch: `src/transcription/remote.rs` (Deepgram batch and live), hooks in `src/transcription/engine.rs` and `src/linux/dictation.rs`, and the Labs row and options (`src/labs.rs`, `src/app_settings.rs`, `src/rune_ui/labs.rs`, `src/rune_ui/general.rs`).
 
 ## Update to the newest upstream release
 
