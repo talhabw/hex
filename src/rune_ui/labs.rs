@@ -524,12 +524,16 @@ pub(super) fn page(ui: &Ui, p: Paint) -> El {
     let mut cards: Vec<CardRow> = Vec::new();
     for row in rows(ui).into_iter().filter(|row| row.feature.shipped()) {
         let unload_idle = row.feature == Feature::UnloadIdle && row.on;
+        let deepgram = row.feature == Feature::RemoteTranscription && row.on;
         let flashing = ui
             .lab_flash
             .is_some_and(|(feature, _)| feature == row.feature);
         cards.push(feature_row(p, row, flashing));
         if unload_idle {
             cards.push(unload_after_row(ui, p));
+        }
+        if deepgram {
+            cards.extend(deepgram_rows(ui, p));
         }
     }
     let rows = cards;
@@ -597,6 +601,117 @@ fn unload_after_row(ui: &Ui, p: Paint) -> CardRow {
         }),
     )
     .into()
+}
+
+/// Fork patch: Deepgram's options, under its row while on.
+fn deepgram_rows(ui: &Ui, p: Paint) -> Vec<CardRow> {
+    use crate::app_settings::{REMOTE_ENDPOINTING_MS, REMOTE_LANGUAGES};
+    let labs = &ui.settings.labs;
+    let mut rows: Vec<CardRow> = Vec::new();
+    rows.push(
+        controls::setting_row(
+            p,
+            "lab-deepgram-mode",
+            tr("Mode"),
+            Some(tr(
+                "Live shows words while you speak; Whole clip sends the recording on release",
+            )),
+            controls::segmented(
+                p,
+                "deepgram-mode",
+                &[tr("Live"), tr("Whole clip")],
+                if labs.remote_streaming { 0 } else { 1 },
+                |ui, index| {
+                    ui.update(|settings| settings.labs.remote_streaming = index == 0);
+                },
+            ),
+        )
+        .into(),
+    );
+    let languages: Vec<&str> = REMOTE_LANGUAGES
+        .iter()
+        .map(|(_, label)| tr(label))
+        .collect();
+    let language = REMOTE_LANGUAGES
+        .iter()
+        .position(|(code, _)| *code == labs.remote_language)
+        .unwrap_or(0);
+    rows.push(
+        controls::setting_row(
+            p,
+            "lab-deepgram-language",
+            tr("Language"),
+            None,
+            controls::segmented(p, "deepgram-language", &languages, language, |ui, index| {
+                let code = REMOTE_LANGUAGES[index].0.to_string();
+                ui.update(|settings| settings.labs.remote_language = code.clone());
+            }),
+        )
+        .into(),
+    );
+    if labs.remote_streaming {
+        let labels: Vec<String> = REMOTE_ENDPOINTING_MS
+            .iter()
+            .map(|ms| format!("{ms} ms"))
+            .collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let selected = REMOTE_ENDPOINTING_MS
+            .iter()
+            .position(|ms| *ms == labs.remote_endpointing_ms)
+            .unwrap_or(2);
+        rows.push(
+            controls::setting_row(
+                p,
+                "lab-deepgram-endpointing",
+                tr("Pause before a phrase ends"),
+                Some(tr("Longer gives language detection more context")),
+                controls::segmented(p, "deepgram-endpointing", &labels, selected, |ui, index| {
+                    let ms = REMOTE_ENDPOINTING_MS[index];
+                    ui.update(|settings| settings.labs.remote_endpointing_ms = ms);
+                }),
+            )
+            .into(),
+        );
+    }
+    rows.push(
+        controls::setting_row(
+            p,
+            "lab-deepgram-dictation",
+            tr("Spoken punctuation"),
+            Some(tr(
+                "Deepgram turns spoken \"comma\", \"period\", \"new line\" into punctuation",
+            )),
+            controls::segmented(
+                p,
+                "deepgram-dictation",
+                &[tr("Off"), tr("On")],
+                usize::from(labs.remote_dictation),
+                |ui, index| {
+                    ui.update(|settings| settings.labs.remote_dictation = index == 1);
+                },
+            ),
+        )
+        .into(),
+    );
+    rows.push(
+        controls::setting_row(
+            p,
+            "lab-deepgram-numerals",
+            tr("Numbers as digits"),
+            None,
+            controls::segmented(
+                p,
+                "deepgram-numerals",
+                &[tr("Off"), tr("On")],
+                usize::from(labs.remote_numerals),
+                |ui, index| {
+                    ui.update(|settings| settings.labs.remote_numerals = index == 1);
+                },
+            ),
+        )
+        .into(),
+    );
+    rows
 }
 
 /// Runs the first run again (`onboarding_kit::live::restart`).

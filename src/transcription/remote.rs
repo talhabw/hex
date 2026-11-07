@@ -59,6 +59,9 @@ pub(crate) struct RemoteConfig {
     /// Deepgram's default is 10; 100 is its advice for code-switching, and
     /// longer segments give language detection more context.
     pub stream_endpointing_ms: u64,
+    /// The language a multilingual result in a non-Latin script (Arabic,
+    /// Persian, Cyrillic…) is transcribed again with; empty never retries.
+    pub retry_language: String,
 }
 
 impl Default for RemoteConfig {
@@ -78,6 +81,7 @@ impl Default for RemoteConfig {
             streaming: true,
             stream_finish_ms: 1_300,
             stream_endpointing_ms: 300,
+            retry_language: "tr".into(),
         }
     }
 }
@@ -102,9 +106,26 @@ pub(crate) fn active() -> Option<RemoteConfig> {
             return None;
         }
     };
-    // Labs › Deepgram transcription switches it; the file holds the key.
-    if !config.enabled || !crate::app_settings::AppSettings::saved_labs().remote_transcription {
+    // Labs › Deepgram transcription switches it and holds its options;
+    // the file holds the key and anything else.
+    let labs = crate::app_settings::AppSettings::saved_labs();
+    if !config.enabled || !labs.remote_transcription {
         return None;
+    }
+    config.streaming = labs.remote_streaming;
+    if !labs.remote_language.is_empty() {
+        config.language = labs.remote_language.clone();
+    }
+    config.stream_endpointing_ms = u64::from(labs.remote_endpointing_ms.max(10));
+    config
+        .extra_params
+        .insert("dictation".into(), labs.remote_dictation.into());
+    config
+        .extra_params
+        .insert("numerals".into(), labs.remote_numerals.into());
+    if config.language != "multi" {
+        // Deepgram answers 400 to a hint on a single-language request.
+        config.extra_params.remove("language_hint");
     }
     if config.api_key.trim().is_empty() {
         config.api_key = std::env::var("DEEPGRAM_API_KEY").unwrap_or_default();
@@ -118,10 +139,39 @@ pub(crate) fn active() -> Option<RemoteConfig> {
 
 /// Transcribes a 16 kHz mono clip with the configured provider.
 pub(crate) fn transcribe(config: &RemoteConfig, clip: &[f32]) -> Result<String, String> {
-    match config.provider.as_str() {
-        "deepgram" => deepgram(config, clip),
-        other => Err(format!("unknown remote transcription provider {other:?}")),
+    let text = match config.provider.as_str() {
+        "deepgram" => deepgram(config, clip)?,
+        other => return Err(format!("unknown remote transcription provider {other:?}")),
+    };
+    match retry_config(config, &text) {
+        Some(retry) => deepgram(&retry, clip),
+        None => Ok(text),
     }
+}
+
+/// Whether `text` has letters outside the Latin script, such as Arabic or
+/// Persian a multilingual guess sometimes produces for Turkish speech.
+pub(crate) fn foreign_script(text: &str) -> bool {
+    text.chars().any(|c| {
+        c.is_alphabetic()
+            && !matches!(c as u32, 0x0000..=0x024F | 0x1E00..=0x1EFF | 0x0300..=0x036F)
+    })
+}
+
+/// A single-language config to transcribe again with, when a multilingual
+/// result came out in a foreign script (`retry_language`, Turkish by default).
+pub(crate) fn retry_config(config: &RemoteConfig, text: &str) -> Option<RemoteConfig> {
+    if config.language != "multi" || config.retry_language.is_empty() || !foreign_script(text) {
+        return None;
+    }
+    tracing::warn!(
+        retry_language = %config.retry_language,
+        "Deepgram answered in a non-Latin script; transcribing again"
+    );
+    let mut retry = config.clone();
+    retry.language = config.retry_language.clone();
+    retry.extra_params.remove("language_hint");
+    Some(retry)
 }
 
 fn wav(clip: &[f32]) -> Result<Vec<u8>, String> {
@@ -284,6 +334,9 @@ mod live {
         finish_wait: Duration,
         started: Instant,
         audio_samples: usize,
+        /// The audio sent, for a batch retry in another language.
+        audio: Vec<f32>,
+        config: RemoteConfig,
     }
 
     impl DeepgramStream {
@@ -337,6 +390,8 @@ mod live {
                 finish_wait: Duration::from_millis(config.stream_finish_ms.max(200)),
                 started: Instant::now(),
                 audio_samples: 0,
+                audio: Vec::new(),
+                config: config.clone(),
             })
         }
 
@@ -358,6 +413,7 @@ mod live {
                 return Err(error);
             }
             self.audio_samples += samples.len();
+            self.audio.extend_from_slice(samples);
             let mut bytes = Vec::with_capacity(samples.len() * 2);
             for sample in samples {
                 let value = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
@@ -390,6 +446,10 @@ mod live {
                 return Err(error.clone());
             }
             let full = join(&text.committed, &text.tentative);
+            drop(text);
+            if let Some(retry) = super::retry_config(&self.config, &full) {
+                return super::deepgram(&retry, &self.audio);
+            }
             tracing::info!(
                 audio_ms = self.audio_samples / 16,
                 stream_ms = self.started.elapsed().as_millis(),

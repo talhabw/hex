@@ -116,7 +116,20 @@ fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
         &rune_theme_opencode::icons::CHEVRON_RIGHT,
         super::picker::open,
     );
+    let deepgram_note = deepgram_on(ui).then(|| {
+        (
+            tr("Deepgram Nova-3 transcribes your dictation; set it up in Labs").to_string(),
+            p.muted(),
+        )
+    });
     let (description, control) = match missing_model(ui) {
+        _ if deepgram_note.is_some() => (
+            deepgram_note,
+            text("Deepgram")
+                .key("transcription-deepgram")
+                .font(p.k.ty.ui)
+                .color(p.muted()),
+        ),
         // Hex can't listen without the selected model: say so, with the
         // download's progress, or Download and Add model file… when none
         // runs, as after Continue without a model (#894).
@@ -177,7 +190,9 @@ fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
         )
         .into(),
     );
-    rows.extend(language_row(ui, p, layer).map(CardRow::from));
+    if !deepgram_on(ui) {
+        rows.extend(language_row(ui, p, layer).map(CardRow::from));
+    }
     let vocabulary_note = super::vocabulary::unused_note(ui);
     rows.push(
         icon_row(
@@ -202,10 +217,19 @@ fn basics(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
     card(p, "basics", rows)
 }
 
+/// Fork patch: Labs › Deepgram transcription is on (Linux and Windows).
+pub(super) fn deepgram_on(ui: &Ui) -> bool {
+    cfg!(not(target_os = "macos")) && ui.settings.labs.remote_transcription
+}
+
 /// The selected speech model's download, while it is not installed, so
 /// Hex can't listen yet. Fixtures that name no installed models say nothing,
 /// so their rows never depend on this machine's models.
 pub(super) fn missing_model(ui: &Ui) -> Option<crate::desktop::onboarding::ModelProgress> {
+    // Fork patch: Deepgram dictates without a local model.
+    if deepgram_on(ui) {
+        return None;
+    }
     if !ui.live() && ui.picker.installed.is_none() {
         return None;
     }

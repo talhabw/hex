@@ -24,6 +24,9 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 if [ -n "$rebase" ]; then
+  # Remember how each conflict was resolved, so the next rebase reuses it.
+  git config rerere.enabled true
+  git config rerere.autoUpdate true
   git fetch upstream --tags
   echo "Rebasing $(git branch --show-current) onto upstream/$base..." >&2
   if ! git rebase "upstream/$base"; then

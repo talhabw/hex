@@ -1426,7 +1426,25 @@ pub struct LabsSettings {
     /// Fork patch: dictation through Deepgram (transcription/remote.rs).
     #[serde(default)]
     pub remote_transcription: bool,
+    /// Fork patch: Deepgram options set under its Labs row; they override
+    /// ~/.config/hex/remote-transcription.json, which keeps the API key.
+    pub remote_streaming: bool,
+    /// `multi`, `tr`, or `en`.
+    pub remote_language: String,
+    pub remote_endpointing_ms: u32,
+    /// Deepgram `dictation`: spoken punctuation ("comma", "virgül").
+    pub remote_dictation: bool,
+    /// Deepgram `numerals`: "three hundred" as 300.
+    pub remote_numerals: bool,
 }
+
+/// Fork patch: what Labs › Deepgram transcription offers.
+pub const REMOTE_LANGUAGES: [(&str, &str); 3] = [
+    ("multi", "Multilingual"),
+    ("tr", "Turkish"),
+    ("en", "English"),
+];
+pub const REMOTE_ENDPOINTING_MS: [u32; 4] = [100, 200, 300, 500];
 
 /// The idle times Labs › Unload model when idle offers, in minutes.
 pub const UNLOAD_IDLE_MINUTES: [u32; 4] = [5, 15, 30, 60];
@@ -1462,6 +1480,11 @@ impl Default for LabsSettings {
             stop_when_call_ends: false,
             output_fixes: false,
             remote_transcription: false,
+            remote_streaming: true,
+            remote_language: "multi".into(),
+            remote_endpointing_ms: 300,
+            remote_dictation: false,
+            remote_numerals: true,
         }
     }
 }
