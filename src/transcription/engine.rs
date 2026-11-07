@@ -604,6 +604,11 @@ impl TranscriptionEngine {
 
     /// Opens a live stream when the loaded model can stream on this device.
     pub fn begin(&self) -> Option<LiveStream> {
+        // Fork patch: remote dictation sends the whole clip after release.
+        #[cfg(not(target_os = "macos"))]
+        if crate::transcription::remote::active().is_some() {
+            return None;
+        }
         if !self.streams.load(Ordering::Acquire) {
             return None;
         }
@@ -663,6 +668,27 @@ impl TranscriptionEngine {
     /// or when the stream is unusable, the clip is transcribed offline.
     #[cfg(not(target_os = "macos"))]
     pub fn finish(&self, stream: Option<LiveStream>, clip: Vec<f32>) -> Result<PendingTranscript> {
+        // Fork patch: dictation through a remote API (transcription/remote.rs).
+        if let Some(remote) = crate::transcription::remote::active() {
+            drop(stream);
+            return self.finish_with(
+                None,
+                clip,
+                Box::new(move |model, clip| {
+                    let clip = whole_clip(clip, crate::labs::skip_pauses());
+                    match crate::transcription::remote::transcribe(&remote, &clip) {
+                        Ok(text) => Ok(text),
+                        Err(reason) if remote.fallback_to_local => {
+                            tracing::warn!(%reason, "remote transcription failed; using the local model");
+                            let mut clip = clip;
+                            crate::dictation::pad_for_parakeet(&mut clip);
+                            model.transcribe(&clip).map_err(|error| format!("{error:#}"))
+                        }
+                        Err(reason) => Err(reason),
+                    }
+                }),
+            );
+        }
         self.finish_with(
             stream,
             clip,

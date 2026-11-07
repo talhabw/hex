@@ -25,6 +25,7 @@ pub(crate) mod models;
 pub(crate) mod pause_segmenter;
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub(crate) mod preparation;
+pub(crate) mod remote;
 pub(crate) mod service;
 pub(crate) mod speech_detector;
 pub(crate) mod stream;
