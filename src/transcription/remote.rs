@@ -78,7 +78,7 @@ impl Default for RemoteConfig {
             timeout_seconds: 30,
             extra_params: Default::default(),
             max_keyterms: 50,
-            streaming: true,
+            streaming: false,
             stream_finish_ms: 1_300,
             stream_endpointing_ms: 300,
             retry_language: "tr".into(),

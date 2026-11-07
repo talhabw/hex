@@ -1480,7 +1480,7 @@ impl Default for LabsSettings {
             stop_when_call_ends: false,
             output_fixes: false,
             remote_transcription: false,
-            remote_streaming: true,
+            remote_streaming: false,
             remote_language: "multi".into(),
             remote_endpointing_ms: 300,
             remote_dictation: false,
