@@ -55,6 +55,10 @@ pub(crate) struct RemoteConfig {
     /// How long a finished stream may take to deliver its last words before
     /// the whole clip is sent instead.
     pub stream_finish_ms: u64,
+    /// Deepgram live `endpointing` (ms of silence that closes a segment).
+    /// Deepgram's default is 10; 100 is its advice for code-switching, and
+    /// longer segments give language detection more context.
+    pub stream_endpointing_ms: u64,
 }
 
 impl Default for RemoteConfig {
@@ -73,6 +77,7 @@ impl Default for RemoteConfig {
             max_keyterms: 50,
             streaming: true,
             stream_finish_ms: 1_300,
+            stream_endpointing_ms: 300,
         }
     }
 }
@@ -285,6 +290,7 @@ mod live {
         /// Starts connecting at once; audio fed before the socket opens waits
         /// in the queue.
         pub(crate) fn start(config: &RemoteConfig, cancel: CancelToken) -> Result<Self, String> {
+            let endpointing = config.stream_endpointing_ms.to_string();
             let url = deepgram_url(
                 DEEPGRAM_LIVE_URL,
                 config,
@@ -293,6 +299,7 @@ mod live {
                     ("sample_rate", "16000"),
                     ("channels", "1"),
                     ("interim_results", "true"),
+                    ("endpointing", &endpointing),
                 ],
             )?;
             let mut request = url
